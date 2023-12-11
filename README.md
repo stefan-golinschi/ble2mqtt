@@ -44,6 +44,10 @@
 - **Xiaomi LYWSD03MMC with custom ATC firmware (xiaomilywsd_atc)**
   - supported both atc1441 and pvvx formats
 - **Qingping CGDK2 (type: qingpingCGDK2)**
+- **RuuviTag (type: ruuvitag)**
+- **RuuviTag Pro 2in1 (type: ruuvitag_pro_2in1)**
+- **RuuviTag Pro 3in1 (type: ruuvitag_pro_3in1)**
+- **RuuviTag Pro 4in1 (type: ruuvitag)**
 
 ### Air sensors
 - **Vson WP6003 (type: wp6003)**
@@ -79,7 +83,10 @@
 
 - **LifeControl MCLH-09 (type: mclh09)**
 
-  optionally, reconnection interval can be configured with `interval` parameter in seconds
+  optionally, polling interval can be configured with `interval` parameter in seconds
+- **Xiaomi Mi Flora (type: miflora)**
+
+  optionally, polling interval can be configured with `interval` parameter in seconds
 
 By default, a device works in the passive mode without connection by 
 listening to advertisement packets from a device.
@@ -88,6 +95,7 @@ To use connection to the device provide `"passive": false` parameter.
 **Supported devices in passive mode:**
 - Xiaomi MJ_HT_V1 (xiaomihtv1)
 - Xiaomi LYWSD03MMC with custom ATC firmware (xiaomilywsd_atc)
+- RuuviTag (ruuvitag/ruuvitag_pro_2in1/ruuvitag_pro_3in1)
 - Any device as presence tracker
 
 ## Manual pairing in Linux
@@ -188,6 +196,7 @@ The configuration file is a JSON with the following content:
         {
             "address": "11:22:33:aa:bb:dd",
             "type": "xiaomihtv1"
+            "interval": 60
         },
         {
             "address": "11:22:34:aa:bb:dd",
@@ -201,6 +210,7 @@ The configuration file is a JSON with the following content:
         {
             "address": "11:22:33:aa:bb:ff",
             "type": "xiaomilywsd_atc"
+            "interval": 60
         },
         {
             "address": "11:22:33:aa:aa:aa",
@@ -211,9 +221,19 @@ The configuration file is a JSON with the following content:
             "type": "voltage_bm2"
         },
         {
-            "address": "11:22:33:aa:aa:bv",
+            "address": "11:22:33:aa:aa:bc",
             "type": "mclh09",
             "interval": 600
+        },
+        {
+            "address": "11:22:33:aa:aa:bd",
+            "type": "miflora",
+            "interval": 500
+        },
+        {
+            "address": "11:22:33:aa:aa:be",
+            "type": "ruuvitag",
+            "interval": 60
         }
     ]
 }
@@ -261,6 +281,22 @@ sudo systemctl start ble2mqtt
 ```
 
 ## Installation on OpenWRT
+
+### OpenWRT 23.05 and later
+
+Create the configuration file in /etc/ble2mqtt.json and
+append your devices.
+
+Execute the following commands in the terminal:
+
+```sh
+opkg update
+opkg install python3-ble2mqtt
+/etc/init.d/ble2mqtt enable
+/etc/init.d/ble2mqtt start
+```
+
+### OpenWRT 22.03 and earlier
 
 Execute the following commands in the terminal:
 

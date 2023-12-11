@@ -1,85 +1,54 @@
 import asyncio as aio
 import logging
 import struct
+import typing as ty
 import uuid
 from dataclasses import dataclass
 
 from .base import SENSOR_DOMAIN, ConnectionMode, Sensor
-from .uuids import BATTERY
 
 _LOGGER = logging.getLogger(__name__)
 
-TEMPERATURE_VALUES = [68.8, 49.8, 24.3, 6.4, 1.0, -5.5, -20.5, -41.0]
-TEMPERATURE_READINGS = [1035, 909, 668, 424, 368, 273, 159, 0]
-MOISTURE_VALUES = [60.0, 58.0, 54.0, 22.0, 2.0, 0.0]
-MOISTURE_READINGS = [1254, 1249, 1202, 1104, 944, 900]
-LIGHT_VALUES = [
-    175300.0, 45400.0, 32100.0, 20300.0, 14760.0, 7600.0, 1200.0, 444.0,
-    29.0, 17.0, 0.0,
-]
-LIGHT_READINGS = [911, 764, 741, 706, 645, 545, 196, 117, 24, 17, 0]
+DEVICE_MODE_UUID = uuid.UUID('00001a00-0000-1000-8000-00805f9b34fb')
+DATA_UUID = uuid.UUID('00001a01-0000-1000-8000-00805f9b34fb')
+FIRMWARE_UUID = uuid.UUID('00001a02-0000-1000-8000-00805f9b34fb')
 
-
-def _interpolate(raw_value, values, raw_values):
-    index = 0
-    if raw_value > raw_values[0]:
-        index = 0
-    elif raw_value < raw_values[-2]:
-        index = len(raw_values) - 2
-    else:
-        while raw_value < raw_values[index + 1]:
-            index += 1
-
-    delta_value = values[index] - values[index + 1]
-    delta_raw = raw_values[index] - raw_values[index + 1]
-    return (
-        (raw_value - raw_values[index + 1]) * delta_value / delta_raw +
-        values[index + 1]
-    )
-
-
-def calculate_temperature(raw_value):
-    return _interpolate(raw_value, TEMPERATURE_VALUES, TEMPERATURE_READINGS)
-
-
-def calculate_moisture(raw_value):
-    humidity = _interpolate(raw_value, MOISTURE_VALUES, MOISTURE_READINGS)
-
-    if humidity > 60.0:
-        humidity = 60.0
-    if humidity < 0.0:
-        humidity = 0.0
-
-    return humidity
-
-
-def calculate_illuminance(raw_value):
-    return _interpolate(raw_value, LIGHT_VALUES, LIGHT_READINGS)
+LIVE_MODE_CMD = bytes([0xA0, 0x1F])
 
 
 @dataclass
 class SensorState:
     temperature: float
-    moisture: float
-    illuminance: int
+    moisture: int
+    illuminance: ty.Optional[int]
+    conductivity: int
     battery: int = 0
 
     @classmethod
-    def from_data(cls, data: bytes, battery: bytes):
-        temp_raw, moisture_raw, illuminance_raw = struct.unpack('<HxxHH', data)
+    def from_data(cls, data: bytes, battery: int):
+        if len(data) == 24:  # is ropot
+            light = None
+            temp, moist, conductivity = struct.unpack(
+                "<hxxxxxBhxxxxxxxxxxxxxx", data
+            )
+        else:
+            temp, light, moist, conductivity = struct.unpack(
+                "<hxIBhxxxxxx", data
+            )
+
         return cls(
-            temperature=round(calculate_temperature(temp_raw), 2),
-            moisture=round(calculate_moisture(moisture_raw), 2),
-            illuminance=int(calculate_illuminance(illuminance_raw)),
-            battery=int.from_bytes(battery, byteorder='little'),
+            temperature=temp / 10.0,
+            moisture=moist,
+            conductivity=conductivity,
+            illuminance=light,
+            battery=battery,
         )
 
 
-class FlowerMonitorMCLH09(Sensor):
-    NAME = 'mclh09'
-    MANUFACTURER = 'LifeControl'
-    DATA_CHAR = uuid.UUID('55482920-eacb-11e3-918a-0002a5d5c51b')
-    BATTERY_CHAR = BATTERY
+class FlowerMonitorMiFlora(Sensor):
+    NAME = 'miflora'
+    MANUFACTURER = 'Xiaomi'
+    MODEL = 'MiFlora'
     ACTIVE_CONNECTION_MODE = ConnectionMode.ACTIVE_POLL_WITH_DISCONNECT
     DEFAULT_RECONNECTION_SLEEP_INTERVAL = 300
     READ_DATA_IN_ACTIVE_LOOP = True
@@ -110,6 +79,10 @@ class FlowerMonitorMCLH09(Sensor):
                     'unit_of_measurement': 'lx',
                 },
                 {
+                    'name': 'conductivity',
+                    'unit_of_measurement': 'µS/cm',
+                },
+                {
                     'name': 'battery',
                     'device_class': 'battery',
                     'unit_of_measurement': '%',
@@ -119,8 +92,9 @@ class FlowerMonitorMCLH09(Sensor):
         }
 
     async def read_state(self):
-        battery = await self._read_with_timeout(self.BATTERY_CHAR)
-        data = await self._read_with_timeout(self.DATA_CHAR)
+        fw_and_bat = await self._read_with_timeout(FIRMWARE_UUID)
+        battery = fw_and_bat[0]
+        data = await self._read_with_timeout(DATA_UUID)
         for _ in range(5):
             try:
                 self._state = SensorState.from_data(data, battery)
@@ -129,6 +103,16 @@ class FlowerMonitorMCLH09(Sensor):
                 await aio.sleep(1)
             else:
                 break
+
+    async def get_device_data(self):
+        self._model = self.MODEL
+        await self.client.write_gatt_char(
+            DEVICE_MODE_UUID,
+            LIVE_MODE_CMD,
+            response=False,
+        )
+        fw_and_bat = await self._read_with_timeout(FIRMWARE_UUID)
+        self._version = fw_and_bat[2:].decode('ascii').strip('\0')
 
     async def do_active_loop(self, publish_topic):
         try:
